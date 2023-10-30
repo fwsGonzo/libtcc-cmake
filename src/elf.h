@@ -159,7 +159,12 @@ typedef struct
 #define ELFOSABI_TRU64		10	/* Compaq TRU64 UNIX.  */
 #define ELFOSABI_MODESTO	11	/* Novell Modesto.  */
 #define ELFOSABI_OPENBSD	12	/* OpenBSD.  */
-#define ELFOSABI_ARM_AEABI	64	/* ARM EABI */
+#define ELFOSABI_OPENVMS        13
+#define ELFOSABI_NSK            14      /* Hewlett-Packard Non-Stop Kernel.  */
+#define ELFOSABI_AROS           15      /* Amiga Research OS.  */
+#define ELFOSABI_FENIXOS        16      /* FenixOS.  */
+#define ELFOSABI_ARM_AEABI	64	/* ARM EABI.  */
+#define ELFOSABI_C6000_LINUX    65      /* Linux TMS320C6000.  */
 #define ELFOSABI_ARM		97	/* ARM */
 #define ELFOSABI_STANDALONE	255	/* Standalone (embedded) application */
 
@@ -820,6 +825,7 @@ typedef struct
 #define	DF_1_SYMINTPOSE	0x00800000	/* Object has individual interposers.  */
 #define	DF_1_GLOBAUDIT	0x01000000	/* Global auditing required.  */
 #define	DF_1_SINGLETON	0x02000000	/* Singleton symbols are used.  */
+#define	DF_1_PIE	0x08000000
 
 /* Flags for the feature selection in DT_FEATURE_1.  */
 #define DTF_1_PARINIT	0x00000001
@@ -2495,22 +2501,30 @@ typedef Elf32_Addr Elf32_Conflict;
 #define R_ARM_CALL		28
 #define R_ARM_JUMP24		29
 #define R_ARM_THM_JUMP24	30
+#define R_ARM_BASE_ABS  31  /* Adjust by program base.  */
 #define R_ARM_ALU_PCREL_7_0	32
 #define R_ARM_ALU_PCREL_15_8	33
 #define R_ARM_ALU_PCREL_23_15	34
 #define R_ARM_LDR_SBREL_11_0	35
 #define R_ARM_ALU_SBREL_19_12	36
 #define R_ARM_ALU_SBREL_27_20	37
+#define R_ARM_TARGET1 38
+#define R_ARM_SBREL31 39  /* Program base relative.  */
 #define R_ARM_V4BX		40
+#define R_ARM_TARGET2   41
 #define R_ARM_PREL31		42
 #define R_ARM_MOVW_ABS_NC	43
 #define R_ARM_MOVT_ABS		 44
+#define R_ARM_MOVW_PREL_NC  45	/* PC relative 16-bit (MOVW).  */
+#define R_ARM_MOVT_PREL 46  /* PC relative (MOVT).  */
 #define R_ARM_THM_MOVW_ABS_NC	47
 #define R_ARM_THM_MOVT_ABS	48
+/* Values from 49 to 89 are not yet used/handled by tcc. */
 #define R_ARM_TLS_GOTDESC	90
 #define R_ARM_TLS_CALL		91
 #define R_ARM_TLS_DESCSEQ	92
 #define R_ARM_THM_TLS_CALL	93
+#define R_ARM_GOT_PREL		96
 #define R_ARM_GNU_VTENTRY	100
 #define R_ARM_GNU_VTINHERIT	101
 #define R_ARM_THM_PC11		102	/* thumb unconditional branch */
@@ -2908,6 +2922,8 @@ typedef Elf32_Addr Elf32_Conflict;
 
 #define R_X86_64_NUM		43
 
+/* x86-64 sh_type values.  */
+#define SHT_X86_64_UNWIND       0x70000001 /* Unwind information.  */
 
 /* AM33 relocations.  */
 #define R_MN10300_NONE		0	/* No reloc.  */

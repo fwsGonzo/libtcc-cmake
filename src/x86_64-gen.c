@@ -33,8 +33,10 @@
 #define RC_INT     0x0001 /* generic integer register */
 #define RC_FLOAT   0x0002 /* generic float register */
 #define RC_RAX     0x0004
-#define RC_RCX     0x0008
-#define RC_RDX     0x0010
+#define RC_RDX     0x0008
+#define RC_RCX     0x0010
+#define RC_RSI     0x0020
+#define RC_RDI     0x0040
 #define RC_ST0     0x0080 /* only for long double */
 #define RC_R8      0x0100
 #define RC_R9      0x0200
@@ -105,12 +107,21 @@ enum {
 /* define if return values need to be extended explicitely
    at caller side (for interfacing with non-TCC compilers) */
 #define PROMOTE_RET
+
+#define TCC_TARGET_NATIVE_STRUCT_COPY
+ST_FUNC void gen_struct_copy(int size);
+
 /******************************************************/
 #else /* ! TARGET_DEFS_ONLY */
 /******************************************************/
 #define USING_GLOBALS
 #include "tcc.h"
 #include <assert.h>
+
+ST_DATA const char * const target_machine_defs =
+    "__x86_64__\0"
+    "__amd64__\0"
+    ;
 
 ST_DATA const int reg_classes[NB_REGS] = {
     /* eax */ RC_INT | RC_RAX,
@@ -119,8 +130,8 @@ ST_DATA const int reg_classes[NB_REGS] = {
     0,
     0,
     0,
-    0,
-    0,
+    RC_RSI,
+    RC_RDI,
     RC_R8,
     RC_R9,
     RC_R10,
@@ -145,6 +156,16 @@ ST_DATA const int reg_classes[NB_REGS] = {
 
 static unsigned long func_sub_sp_offset;
 static int func_ret_sub;
+
+#if defined(CONFIG_TCC_BCHECK)
+static addr_t func_bound_offset;
+static unsigned long func_bound_ind;
+ST_DATA int func_bound_add_epilog;
+#endif
+
+#ifdef TCC_TARGET_PE
+static int func_scratch, func_alloca;
+#endif
 
 /* XXX: make it faster ? */
 ST_FUNC void g(int c)
@@ -431,6 +452,9 @@ void load(int r, SValue *sv)
             b = 0xbf0f;   /* movswl */
         } else if ((ft & VT_TYPE) == (VT_SHORT | VT_UNSIGNED)) {
             b = 0xb70f;   /* movzwl */
+        } else if ((ft & VT_TYPE) == (VT_VOID)) {
+            /* Can happen with zero size structs */
+            return;
         } else {
             assert(((ft & VT_BTYPE) == VT_INT)
                    || ((ft & VT_BTYPE) == VT_LLONG)
@@ -557,7 +581,9 @@ void store(int r, SValue *v)
 
 #ifndef TCC_TARGET_PE
     /* we need to access the variable via got */
-    if (fr == VT_CONST && (v->r & VT_SYM)) {
+    if (fr == VT_CONST
+        && (v->r & VT_SYM)
+        && !(v->sym->type.t & VT_STATIC)) {
         /* mov xx(%rip), %r11 */
         o(0x1d8b4c);
         gen_gotpcrel(TREG_R11, v->sym, v->c.i);
@@ -637,69 +663,16 @@ static void gcall_or_jmp(int is_jmp)
 }
 
 #if defined(CONFIG_TCC_BCHECK)
-static addr_t func_bound_offset;
-static unsigned long func_bound_ind;
 
 static void gen_bounds_call(int v)
 {
-    Sym *sym = external_global_sym(v, &func_old_type);
+    Sym *sym = external_helper_sym(v);
     oad(0xe8, 0);
 #ifdef TCC_TARGET_PE
     greloca(cur_text_section, sym, ind-4, R_X86_64_PC32, -4);
 #else
     greloca(cur_text_section, sym, ind-4, R_X86_64_PLT32, -4);
 #endif
-}
-
-/* generate a bounded pointer addition */
-ST_FUNC void gen_bounded_ptr_add(void)
-{
-    vpush_global_sym(&func_old_type, TOK___bound_ptr_add);
-    vrott(3);
-    gfunc_call(2);
-    vpushi(0);
-    /* returned pointer is in rax */
-    vtop->r = TREG_RAX | VT_BOUNDED;
-    if (nocode_wanted)
-        return;
-    /* relocation offset of the bounding function call point */
-    vtop->c.i = (cur_text_section->reloc->data_offset - sizeof(ElfW(Rela)));
-}
-
-/* patch pointer addition in vtop so that pointer dereferencing is
-   also tested */
-ST_FUNC void gen_bounded_ptr_deref(void)
-{
-    addr_t func;
-    int size, align;
-    ElfW(Rela) *rel;
-    Sym *sym;
-
-    if (nocode_wanted)
-        return;
-
-    size = type_size(&vtop->type, &align);
-    switch(size) {
-    case  1: func = TOK___bound_ptr_indir1; break;
-    case  2: func = TOK___bound_ptr_indir2; break;
-    case  4: func = TOK___bound_ptr_indir4; break;
-    case  8: func = TOK___bound_ptr_indir8; break;
-    case 12: func = TOK___bound_ptr_indir12; break;
-    case 16: func = TOK___bound_ptr_indir16; break;
-    default:
-        /* may happen with struct member access */
-        return;
-        //tcc_error("unhandled size when dereferencing bounded pointer");
-        //func = 0;
-        //break;
-    }
-    sym = external_global_sym(func, &func_old_type);
-    if (!sym->c)
-        put_extern_sym(sym, NULL, 0, 0);
-    /* patch relocation */
-    /* XXX: find a better solution ? */
-    rel = (ElfW(Rela) *)(cur_text_section->reloc->data + vtop->c.i);
-    rel->r_info = ELF64_R_INFO(sym->c, ELF64_R_TYPE(rel->r_info));
 }
 
 #ifdef TCC_TARGET_PE
@@ -713,8 +686,9 @@ static void gen_bounds_prolog(void)
     /* leave some room for bound checking code */
     func_bound_offset = lbounds_section->data_offset;
     func_bound_ind = ind;
-    o(0xb848 + TREG_FASTCALL_1 * 0x100); /*lbound section pointer */
-    gen_le64 (0);
+    func_bound_add_epilog = 0;
+    o(0x0d8d48 + ((TREG_FASTCALL_1 == TREG_RDI) * 0x300000)); /*lbound section pointer */
+    gen_le32 (0);
     oad(0xb8, 0); /* call to function */
 }
 
@@ -723,34 +697,47 @@ static void gen_bounds_epilog(void)
     addr_t saved_ind;
     addr_t *bounds_ptr;
     Sym *sym_data;
+    int offset_modified = func_bound_offset != lbounds_section->data_offset;
+
+    if (!offset_modified && !func_bound_add_epilog)
+        return;
 
     /* add end of table info */
     bounds_ptr = section_ptr_add(lbounds_section, sizeof(addr_t));
     *bounds_ptr = 0;
 
-    /* generate bound local allocation */
     sym_data = get_sym_ref(&char_pointer_type, lbounds_section, 
-                           func_bound_offset, lbounds_section->data_offset);
-    saved_ind = ind;
-    ind = func_bound_ind;
-    greloca(cur_text_section, sym_data, ind + 2, R_X86_64_64, 0);
-    ind = ind + 10;
-    gen_bounds_call(TOK___bound_local_new);
-    ind = saved_ind;
+                           func_bound_offset, PTR_SIZE);
+
+    /* generate bound local allocation */
+    if (offset_modified) {
+        saved_ind = ind;
+        ind = func_bound_ind;
+        greloca(cur_text_section, sym_data, ind + 3, R_X86_64_PC32, -4);
+        ind = ind + 7;
+        gen_bounds_call(TOK___bound_local_new);
+        ind = saved_ind;
+    }
 
     /* generate bound check local freeing */
-    o(0x525051); /* save returned value, if any (+ scratch-space for windows) */
-    greloca(cur_text_section, sym_data, ind + 2, R_X86_64_64, 0);
-    o(0xb848 + TREG_FASTCALL_1 * 0x100); /* mov xxx, %rcx/di */
-    gen_le64 (0);
+    o(0x5250); /* save returned value, if any */
+    o(0x20ec8348); /* sub $32,%rsp */
+    o(0x290f);     /* movaps %xmm0,0x10(%rsp) */
+    o(0x102444);
+    o(0x240c290f); /* movaps %xmm1,(%rsp) */
+    greloca(cur_text_section, sym_data, ind + 3, R_X86_64_PC32, -4);
+    o(0x0d8d48 + ((TREG_FASTCALL_1 == TREG_RDI) * 0x300000)); /* lea xxx(%rip), %rcx/rdi */
+    gen_le32 (0);
     gen_bounds_call(TOK___bound_local_delete);
-    o(0x59585a); /* restore returned value, if any */
+    o(0x280f);     /* movaps 0x10(%rsp),%xmm0 */
+    o(0x102444);
+    o(0x240c280f); /* movaps (%rsp),%xmm1 */
+    o(0x20c48348); /* add $32,%rsp */
+    o(0x585a); /* restore returned value, if any */
 }
 #endif
 
 #ifdef TCC_TARGET_PE
-
-static int func_scratch, func_alloca;
 
 #define REGN 4
 static const uint8_t arg_regs[REGN] = {
@@ -764,7 +751,7 @@ static int arg_prepare_reg(int idx) {
       /* idx=0: r10, idx=1: r11 */
       return idx + 10;
   else
-      return arg_regs[idx];
+      return idx >= 0 && idx < REGN ? arg_regs[idx] : 0;
 }
 
 /* Generate function call. The function address is pushed first, then
@@ -948,7 +935,6 @@ void gfunc_call(int nb_args)
         if (tcc_state->do_bounds_check)
             gen_bounds_call(TOK___bound_alloca_nr); /* new region */
 #endif
-
     }
     vtop--;
 }
@@ -978,8 +964,6 @@ void gfunc_prolog(Sym *func_sym)
 
     /* if the function returns a structure, then add an
        implicit pointer parameter */
-    func_vt = sym->type;
-    func_var = (sym->f.func_type == FUNC_ELLIPSIS);
     size = gfunc_arg_size(&func_vt);
     if (!using_regs(size)) {
         gen_modrm64(0x89, arg_regs[reg_param_index], VT_LOCAL, NULL, addr);
@@ -1019,7 +1003,7 @@ void gfunc_prolog(Sym *func_sym)
     }
 
     while (reg_param_index < REGN) {
-        if (func_type->ref->f.func_type == FUNC_ELLIPSIS) {
+        if (func_var) {
             gen_modrm64(0x89, arg_regs[reg_param_index], VT_LOCAL, NULL, addr);
             addr += 8;
         }
@@ -1059,7 +1043,7 @@ void gfunc_epilog(void)
     v = -loc;
 
     if (v >= 4096) {
-        Sym *sym = external_global_sym(TOK___chkstk, &func_old_type);
+        Sym *sym = external_helper_sym(TOK___chkstk);
         oad(0xb8, v); /* mov stacksize, %eax */
         oad(0xe8, 0); /* call __chkstk, (does the stackframe too) */
         greloca(cur_text_section, sym, ind-4, R_X86_64_PC32, -4);
@@ -1166,7 +1150,8 @@ static X86_64_Mode classify_x86_64_arg(CType *ty, CType *ret, int *psize, int *p
         size = type_size(ty, &align);
         *psize = (size + 7) & ~7;
         *palign = (align + 7) & ~7;
-    
+        *reg_count = 0; /* avoid compiler warning */
+
         if (size > 16) {
             mode = x86_64_mode_memory;
         } else {
@@ -1238,9 +1223,11 @@ ST_FUNC int classify_x86_64_va_arg(CType *ty)
 ST_FUNC int gfunc_sret(CType *vt, int variadic, CType *ret, int *ret_align, int *regsize)
 {
     int size, align, reg_count;
+    if (classify_x86_64_arg(vt, ret, &size, &align, &reg_count) == x86_64_mode_memory)
+        return 0;
     *ret_align = 1; // Never have to re-align return values for x86-64
-    *regsize = 8;
-    return (classify_x86_64_arg(vt, ret, &size, &align, &reg_count) != x86_64_mode_memory);
+    *regsize = 8 * reg_count; /* the (virtual) regsize is 16 for VT_QLONG/QFLOAT */
+    return 1;
 }
 
 #define REGN 6
@@ -1253,7 +1240,7 @@ static int arg_prepare_reg(int idx) {
       /* idx=2: r10, idx=3: r11 */
       return idx + 8;
   else
-      return arg_regs[idx];
+      return idx >= 0 && idx < REGN ? arg_regs[idx] : 0;
 }
 
 /* Generate function call. The function address is pushed first, then
@@ -1263,11 +1250,11 @@ void gfunc_call(int nb_args)
 {
     X86_64_Mode mode;
     CType type;
-    int size, align, r, args_size, stack_adjust, i, reg_count;
+    int size, align, r, args_size, stack_adjust, i, reg_count, k;
     int nb_reg_args = 0;
     int nb_sse_args = 0;
     int sse_reg, gen_reg;
-    char _onstack[nb_args ? nb_args : 1], *onstack = _onstack;
+    char *onstack = tcc_malloc((nb_args + 1) * sizeof (char));
 
 #ifdef CONFIG_TCC_BCHECK
     if (tcc_state->do_bounds_check)
@@ -1281,6 +1268,7 @@ void gfunc_call(int nb_args)
     stack_adjust = 0;
     for(i = nb_args - 1; i >= 0; i--) {
         mode = classify_x86_64_arg(&vtop[-i].type, NULL, &size, &align, &reg_count);
+        if (size == 0) continue;
         if (mode == x86_64_mode_sse && nb_sse_args + reg_count <= 8) {
             nb_sse_args += reg_count;
 	    onstack[i] = 0;
@@ -1313,23 +1301,25 @@ void gfunc_call(int nb_args)
     sse_reg = nb_sse_args;
     args_size = 0;
     stack_adjust &= 15;
-    for (i = 0; i < nb_args;) {
+    for (i = k = 0; i < nb_args;) {
 	mode = classify_x86_64_arg(&vtop[-i].type, NULL, &size, &align, &reg_count);
-	if (!onstack[i]) {
-	    ++i;
-	    continue;
-	}
-        /* Possibly adjust stack to align SSE boundary.  We're processing
-	   args from right to left while allocating happens left to right
-	   (stack grows down), so the adjustment needs to happen _after_
-	   an argument that requires it.  */
-        if (stack_adjust) {
-	    o(0x50); /* push %rax; aka sub $8,%rsp */
-            args_size += 8;
-	    stack_adjust = 0;
+	if (size) {
+            if (!onstack[i + k]) {
+	        ++i;
+	        continue;
+	    }
+            /* Possibly adjust stack to align SSE boundary.  We're processing
+	       args from right to left while allocating happens left to right
+	       (stack grows down), so the adjustment needs to happen _after_
+	       an argument that requires it.  */
+            if (stack_adjust) {
+	        o(0x50); /* push %rax; aka sub $8,%rsp */
+                args_size += 8;
+	        stack_adjust = 0;
+            }
+	    if (onstack[i + k] == 2)
+	        stack_adjust = 1;
         }
-	if (onstack[i] == 2)
-	  stack_adjust = 1;
 
 	vrotb(i+1);
 
@@ -1344,7 +1334,14 @@ void gfunc_call(int nb_args)
 		o(0xe0 + REG_VALUE(r));
 		vset(&vtop->type, r | VT_LVAL, 0);
 		vswap();
+		/* keep stack aligned for (__bound_)memmove call */
+		o(0x10ec8348); /* sub $16,%rsp */
+		o(0xf0e48348); /* and $-16,%rsp */
+		orex(0,r,0,0x50 + REG_VALUE(r)); /* push r (last %rsp) */
+		o(0x08ec8348); /* sub $8,%rsp */
 		vstore();
+		o(0x08c48348); /* add $8,%rsp */
+		o(0x5c);       /* pop %rsp */
 		break;
 
 	    case VT_LDOUBLE:
@@ -1378,8 +1375,10 @@ void gfunc_call(int nb_args)
 
 	vpop();
 	--nb_args;
-	onstack++;
+	k++;
     }
+
+    tcc_free(onstack);
 
     /* XXX This should be superfluous.  */
     save_regs(0); /* save used temporary registers */
@@ -1392,6 +1391,7 @@ void gfunc_call(int nb_args)
     assert(sse_reg <= 8);
     for(i = 0; i < nb_args; i++) {
         mode = classify_x86_64_arg(&vtop->type, &type, &size, &align, &reg_count);
+        if (size == 0) continue;
         /* Alter stack entry type so that gv() knows how to treat it */
         vtop->type = type;
         if (mode == x86_64_mode_sse) {
@@ -1465,7 +1465,7 @@ static void push_arg_reg(int i) {
 void gfunc_prolog(Sym *func_sym)
 {
     CType *func_type = &func_sym->type;
-    X86_64_Mode mode;
+    X86_64_Mode mode, ret_mode;
     int i, addr, align, size, reg_count;
     int param_addr = 0, reg_param_index, sse_param_index;
     Sym *sym;
@@ -1477,10 +1477,12 @@ void gfunc_prolog(Sym *func_sym)
     ind += FUNC_PROLOG_SIZE;
     func_sub_sp_offset = ind;
     func_ret_sub = 0;
+    ret_mode = classify_x86_64_arg(&func_vt, NULL, &size, &align, &reg_count);
 
-    if (sym->f.func_type == FUNC_ELLIPSIS) {
+    if (func_var) {
         int seen_reg_num, seen_sse_num, seen_stack_size;
-        seen_reg_num = seen_sse_num = 0;
+        seen_reg_num = ret_mode == x86_64_mode_memory;
+        seen_sse_num = 0;
         /* frame pointer and return address */
         seen_stack_size = PTR_SIZE * 2;
         /* count the number of seen parameters */
@@ -1508,16 +1510,23 @@ void gfunc_prolog(Sym *func_sym)
             }
         }
 
-        loc -= 16;
-        /* movl $0x????????, -0x10(%rbp) */
-        o(0xf045c7);
+        loc -= 24;
+        /* movl $0x????????, -0x18(%rbp) */
+        o(0xe845c7);
         gen_le32(seen_reg_num * 8);
-        /* movl $0x????????, -0xc(%rbp) */
-        o(0xf445c7);
+        /* movl $0x????????, -0x14(%rbp) */
+        o(0xec45c7);
         gen_le32(seen_sse_num * 16 + 48);
-        /* movl $0x????????, -0x8(%rbp) */
-        o(0xf845c7);
-        gen_le32(seen_stack_size);
+	/* leaq $0x????????, %r11 */
+	o(0x9d8d4c);
+	gen_le32(seen_stack_size);
+	/* movq %r11, -0x10(%rbp) */
+	o(0xf05d894c);
+	/* leaq $-192(%rbp), %r11 */
+	o(0x9d8d4c);
+	gen_le32(-176 - 24);
+	/* movq %r11, -0x8(%rbp) */
+	o(0xf85d894c);
 
         /* save all register passing arguments */
         for (i = 0; i < 8; i++) {
@@ -1542,9 +1551,7 @@ void gfunc_prolog(Sym *func_sym)
 
     /* if the function returns a structure, then add an
        implicit pointer parameter */
-    func_vt = sym->type;
-    mode = classify_x86_64_arg(&func_vt, NULL, &size, &align, &reg_count);
-    if (mode == x86_64_mode_memory) {
+    if (ret_mode == x86_64_mode_memory) {
         push_arg_reg(reg_param_index);
         func_vc = loc;
         reg_param_index++;
@@ -1833,14 +1840,38 @@ void gen_opl(int op)
     gen_opi(op);
 }
 
+void vpush_const(int t, int v)
+{
+    CType ctype = { t | VT_CONSTANT, 0 };
+    vpushsym(&ctype, external_global_sym(v, &ctype));
+    vtop->r |= VT_LVAL;
+}
+
 /* generate a floating point operation 'v = t1 op t2' instruction. The
    two operands are guaranteed to have the same floating point type */
 /* XXX: need to use ST1 too */
 void gen_opf(int op)
 {
     int a, ft, fc, swapped, r;
-    int float_type =
-        (vtop->type.t & VT_BTYPE) == VT_LDOUBLE ? RC_ST0 : RC_FLOAT;
+    int bt = vtop->type.t & VT_BTYPE;
+    int float_type = bt == VT_LDOUBLE ? RC_ST0 : RC_FLOAT;
+
+    if (op == TOK_NEG) { /* unary minus */
+        gv(float_type);
+        if (float_type == RC_ST0) {
+            o(0xe0d9); /* fchs */
+        } else {
+            /* -0.0, in libtcc1.c */
+            vpush_const(bt, bt == VT_FLOAT ? TOK___mzerosf : TOK___mzerodf);
+            gv(RC_FLOAT);
+            if (bt == VT_DOUBLE)
+                o(0x66);
+            /* xorp[sd] %xmm1, %xmm0 */
+            o(0xc0570f | (REG_VALUE(vtop[0].r) + REG_VALUE(vtop[-1].r)*8) << 16);
+            vtop--;
+        }
+        return;
+    }
 
     /* convert constants to memory references */
     if ((vtop[-1].r & (VT_VALMASK | VT_LVAL)) == VT_CONST) {
@@ -2016,6 +2047,7 @@ void gen_opf(int op)
                 assert(vtop->r & VT_LVAL);
                 gv(RC_FLOAT);
                 vswap();
+                fc = vtop->c.i; /* bcheck may have saved previous vtop[-1] */
             }
             
             if ((ft & VT_BTYPE) == VT_DOUBLE) {
@@ -2196,8 +2228,17 @@ ST_FUNC void gen_cvt_csti(int t)
         );
 }
 
+/* increment tcov counter */
+ST_FUNC void gen_increment_tcov (SValue *sv)
+{
+   o(0x058348); /* addq $1, xxx(%rip) */
+   greloca(cur_text_section, sv->sym, ind, R_X86_64_PC32, -5);
+   gen_le32(0);
+   o(1);
+}
+
 /* computed goto support */
-void ggoto(void)
+ST_FUNC void ggoto(void)
 {
     gcall_or_jmp(1);
     vtop--;
@@ -2234,7 +2275,7 @@ ST_FUNC void gen_vla_alloc(CType *type, int align) {
 #endif
     if (use_call)
     {
-        vpush_global_sym(&func_old_type, TOK_alloca);
+        vpush_helper_func(TOK_alloca);
         vswap(); /* Move alloca ref past allocation size */
         gfunc_call(1);
     }
@@ -2251,6 +2292,38 @@ ST_FUNC void gen_vla_alloc(CType *type, int align) {
     }
 }
 
+/*
+ * Assmuing the top part of the stack looks like below,
+ *  src dest src
+ */
+ST_FUNC void gen_struct_copy(int size)
+{
+    int n = size / PTR_SIZE;
+#ifdef TCC_TARGET_PE
+    o(0x5756); /* push rsi, rdi */
+#endif
+    gv2(RC_RDI, RC_RSI);
+    if (n <= 4) {
+        while (n)
+            o(0xa548), --n;
+    } else {
+        vpushi(n);
+        gv(RC_RCX);
+        o(0xa548f3);
+        vpop();
+    }
+    if (size & 0x04)
+        o(0xa5);
+    if (size & 0x02)
+        o(0xa566);
+    if (size & 0x01)
+        o(0xa4);
+#ifdef TCC_TARGET_PE
+    o(0x5e5f); /* pop rdi, rsi */
+#endif
+    vpop();
+    vpop();
+}
 
 /* end of x86-64 code generator */
 /*************************************************************/

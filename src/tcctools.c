@@ -61,34 +61,28 @@ static int contains_any(const char *s, const char *list) {
 }
 
 static int ar_usage(int ret) {
-    fprintf(stderr, "usage: tcc -ar [rcsv] lib file...\n");
-    fprintf(stderr, "create library ([abdioptxN] not supported).\n");
+    fprintf(stderr, "usage: tcc -ar [crstvx] lib [files]\n");
+    fprintf(stderr, "create library ([abdiopN] not supported).\n");
     return ret;
 }
 
 ST_FUNC int tcc_tool_ar(TCCState *s1, int argc, char **argv)
 {
-    static ArHdr arhdr = {
+    static const ArHdr arhdr_init = {
         "/               ",
-        "            ",
+        "0           ",
         "0     ",
         "0     ",
         "0       ",
-        "          ",
+        "0         ",
         ARFMAG
         };
 
-    static ArHdr arhdro = {
-        "                ",
-        "            ",
-        "0     ",
-        "0     ",
-        "0       ",
-        "          ",
-        ARFMAG
-        };
+    ArHdr arhdr = arhdr_init;
+    ArHdr arhdro = arhdr_init;
 
     FILE *fi, *fh = NULL, *fo = NULL;
+    const char *created_file = NULL; // must delete on error
     ElfW(Ehdr) *ehdr;
     ElfW(Shdr) *shdr;
     ElfW(Sym) *sym;
@@ -101,7 +95,9 @@ ST_FUNC int tcc_tool_ar(TCCState *s1, int argc, char **argv)
     char tfile[260], stmp[20];
     char *file, *name;
     int ret = 2;
-    const char *ops_conflict = "habdioptxN";  // unsupported but destructive if ignored.
+    const char *ops_conflict = "habdiopN";  // unsupported but destructive if ignored.
+    int extract = 0;
+    int table = 0;
     int verbose = 0;
 
     i_lib = 0; i_obj = 0;  // will hold the index of the lib and first obj
@@ -112,6 +108,10 @@ ST_FUNC int tcc_tool_ar(TCCState *s1, int argc, char **argv)
         if ((*a == '-') || (i == 1 && !strstr(a, "."))) {  // options argument
             if (contains_any(a, ops_conflict))
                 ret = 1;
+            if (strstr(a, "x"))
+                extract = 1;
+            if (strstr(a, "t"))
+                table = 1;
             if (strstr(a, "v"))
                 verbose = 1;
         } else {  // lib or obj files: don't abort - keep validating all args.
@@ -122,17 +122,73 @@ ST_FUNC int tcc_tool_ar(TCCState *s1, int argc, char **argv)
         }
     }
 
-    if (!i_obj)  // i_obj implies also i_lib. we require both.
+    if (!i_lib)  // i_obj implies also i_lib.
         ret = 1;
+    i_obj = i_obj ? i_obj : argc;  // An empty archive will be generated if no input file is given
 
     if (ret == 1)
         return ar_usage(ret);
 
+    if (extract || table) {
+        if ((fh = fopen(argv[i_lib], "rb")) == NULL)
+        {
+            fprintf(stderr, "tcc: ar: can't open file %s\n", argv[i_lib]);
+            goto finish;
+        }
+        fread(stmp, 1, 8, fh);
+	if (memcmp(stmp,ARMAG,8))
+	{
+no_ar:
+            fprintf(stderr, "tcc: ar: not an ar archive %s\n", argv[i_lib]);
+            goto finish;
+	}
+	while (fread(&arhdr, 1, sizeof(arhdr), fh) == sizeof(arhdr)) {
+	    char *p, *e;
+
+	    if (memcmp(arhdr.ar_fmag, ARFMAG, 2))
+		goto no_ar;
+	    p = arhdr.ar_name;
+	    for (e = p + sizeof arhdr.ar_name; e > p && e[-1] == ' ';)
+		e--;
+	    *e = '\0';
+	    arhdr.ar_size[sizeof arhdr.ar_size-1] = 0;
+	    fsize = atoi(arhdr.ar_size);
+	    buf = tcc_malloc(fsize + 1);
+	    fread(buf, fsize, 1, fh);
+	    if (strcmp(arhdr.ar_name,"/") && strcmp(arhdr.ar_name,"/SYM64/")) {
+		if (e > p && e[-1] == '/')
+		    e[-1] = '\0';
+		/* tv not implemented */
+	        if (table || verbose)
+		    printf("%s%s\n", extract ? "x - " : "", arhdr.ar_name);
+		if (extract) {
+		    if ((fo = fopen(arhdr.ar_name, "wb")) == NULL)
+		    {
+			fprintf(stderr, "tcc: ar: can't create file %s\n",
+				arhdr.ar_name);
+		        tcc_free(buf);
+			goto finish;
+		    }
+		    fwrite(buf, fsize, 1, fo);
+		    fclose(fo);
+		    /* ignore date/uid/gid/mode */
+		}
+	    }
+            tcc_free(buf);
+	}
+	ret = 0;
+finish:
+	if (fh)
+		fclose(fh);
+	return ret;
+    }
+
     if ((fh = fopen(argv[i_lib], "wb")) == NULL)
     {
-        fprintf(stderr, "tcc: ar: can't open file %s \n", argv[i_lib]);
+        fprintf(stderr, "tcc: ar: can't create file %s\n", argv[i_lib]);
         goto the_end;
     }
+    created_file = argv[i_lib];
 
     sprintf(tfile, "%s.tmp", argv[i_lib]);
     if ((fo = fopen(tfile, "wb+")) == NULL)
@@ -143,7 +199,7 @@ ST_FUNC int tcc_tool_ar(TCCState *s1, int argc, char **argv)
 
     funcmax = 250;
     afpos = tcc_realloc(NULL, funcmax * sizeof *afpos); // 250 func
-    memcpy(&arhdro.ar_mode, "100666", 6);
+    memcpy(&arhdro.ar_mode, "100644", 6);
 
     // i_obj = first input object file
     while (i_obj < argc)
@@ -207,6 +263,9 @@ ST_FUNC int tcc_tool_ar(TCCState *s1, int argc, char **argv)
                     (sym->st_info == 0x10
                     || sym->st_info == 0x11
                     || sym->st_info == 0x12
+                    || sym->st_info == 0x20
+                    || sym->st_info == 0x21
+                    || sym->st_info == 0x22
                     )) {
                     //printf("symtab: %2Xh %4Xh %2Xh %s\n", sym->st_info, sym->st_size, sym->st_shndx, strtab + sym->st_name);
                     istrlen = strlen(strtab + sym->st_name)+1;
@@ -245,8 +304,13 @@ ST_FUNC int tcc_tool_ar(TCCState *s1, int argc, char **argv)
     if ((hofs & 1)) // align
         hofs++, fpos = 1;
     // write header
-    fwrite("!<arch>\n", 8, 1, fh);
-    sprintf(stmp, "%-10d", (int)(strpos + (funccnt+1) * sizeof(int)));
+    fwrite(ARMAG, 8, 1, fh);
+    // create an empty archive
+    if (!funccnt) {
+        ret = 0;
+        goto the_end;
+    }
+    sprintf(stmp, "%-10d", (int)(strpos + (funccnt+1) * sizeof(int)) + fpos);
     memcpy(&arhdr.ar_size, stmp, 10);
     fwrite(&arhdr, sizeof(arhdr), 1, fh);
     afpos[0] = le2belong(funccnt);
@@ -272,6 +336,8 @@ the_end:
         tcc_free(afpos);
     if (fh)
         fclose(fh);
+    if (created_file && ret != 0)
+        remove(created_file);
     if (fo)
         fclose(fo), remove(tfile);
     return ret;
@@ -392,10 +458,8 @@ usage:
     ret = 0;
 
 the_end:
-    /* cannot free memory received from tcc_get_dllexports
-       if it came from a dll */
-    /* if (p)
-        tcc_free(p); */
+    if (p)
+        tcc_free(p);
     if (fp)
         fclose(fp);
     if (op)
@@ -430,9 +494,10 @@ the_end:
 
 #if !defined TCC_TARGET_I386 && !defined TCC_TARGET_X86_64
 
-ST_FUNC void tcc_tool_cross(TCCState *s1, char **argv, int option)
+ST_FUNC int tcc_tool_cross(TCCState *s1, char **argv, int option)
 {
-    tcc_error("-m%d not implemented.", option);
+    tcc_error_noabort("-m%d not implemented.", option);
+    return 1;
 }
 
 #else
@@ -479,7 +544,7 @@ static int execvp_win32(const char *prog, char **argv)
 #define execvp execvp_win32
 #endif /* _WIN32 */
 
-ST_FUNC void tcc_tool_cross(TCCState *s1, char **argv, int target)
+ST_FUNC int tcc_tool_cross(TCCState *s1, char **argv, int target)
 {
     char program[4096];
     char *a0 = argv[0];
@@ -498,7 +563,8 @@ ST_FUNC void tcc_tool_cross(TCCState *s1, char **argv, int target)
 
     if (strcmp(a0, program))
         execvp(argv[0] = program, argv);
-    tcc_error("could not run '%s'", program);
+    tcc_error_noabort("could not run '%s'", program);
+    return 1;
 }
 
 #endif /* TCC_TARGET_I386 && TCC_TARGET_X86_64 */
@@ -506,20 +572,33 @@ ST_FUNC void tcc_tool_cross(TCCState *s1, char **argv, int target)
 /* enable commandline wildcard expansion (tcc -o x.exe *.c) */
 
 #ifdef _WIN32
-int _CRT_glob = 1;
+const int _CRT_glob = 1;
 #ifndef _CRT_glob
-int _dowildcard = 1;
+const int _dowildcard = 1;
 #endif
 #endif
 
 /* -------------------------------------------------------------- */
 /* generate xxx.d file */
 
-ST_FUNC void gen_makedeps(TCCState *s1, const char *target, const char *filename)
+static char *escape_target_dep(const char *s) {
+    char *res = tcc_malloc(strlen(s) * 2 + 1);
+    int j;
+    for (j = 0; *s; s++, j++) {
+        if (is_space(*s)) {
+            res[j++] = '\\';
+        }
+        res[j] = *s;
+    }
+    res[j] = '\0';
+    return res;
+}
+
+ST_FUNC int gen_makedeps(TCCState *s1, const char *target, const char *filename)
 {
     FILE *depout;
-    char buf[1024];
-    int i;
+    char buf[1024], *escaped_target;
+    int i, k;
 
     if (!filename) {
         /* compute filename automatically: dir/file.o -> dir/file.d */
@@ -528,19 +607,45 @@ ST_FUNC void gen_makedeps(TCCState *s1, const char *target, const char *filename
         filename = buf;
     }
 
+    if(!strcmp(filename, "-"))
+        depout = fdopen(1, "w");
+    else
+        /* XXX return err codes instead of error() ? */
+        depout = fopen(filename, "w");
+    if (!depout)
+        return tcc_error_noabort("could not open '%s'", filename);
     if (s1->verbose)
         printf("<- %s\n", filename);
 
-    /* XXX return err codes instead of error() ? */
-    depout = fopen(filename, "w");
-    if (!depout)
-        tcc_error("could not open '%s'", filename);
-
-    fprintf(depout, "%s: \\\n", target);
-    for (i=0; i<s1->nb_target_deps; ++i)
-        fprintf(depout, " %s \\\n", s1->target_deps[i]);
+    fprintf(depout, "%s:", target);
+    for (i = 0; i<s1->nb_target_deps; ++i) {
+        for (k = 0; k < i; ++k)
+            if (0 == strcmp(s1->target_deps[i], s1->target_deps[k]))
+                goto next;
+        escaped_target = escape_target_dep(s1->target_deps[i]);
+        fprintf(depout, " \\\n  %s", escaped_target);
+        tcc_free(escaped_target);
+    next:;
+    }
     fprintf(depout, "\n");
+    if (s1->gen_phony_deps) {
+        /* Skip first file, which is the c file.
+         * This will still print any additional c files specified
+         * on command-line, but e.g. clang produces broken dependency
+         * files in this case as well, printing only dependencies for last
+         * file in command line. So ignore this case. */
+        for (i = 1; i<s1->nb_target_deps; ++i) {
+            for (k = 0; k < i; ++k)
+                if (0 == strcmp(s1->target_deps[i], s1->target_deps[k]))
+                    goto next2;
+            escaped_target = escape_target_dep(s1->target_deps[i]);
+            fprintf(depout, "%s:\n", escaped_target);
+            tcc_free(escaped_target);
+        next2:;
+        }
+    }
     fclose(depout);
+    return 0;
 }
 
 /* -------------------------------------------------------------- */

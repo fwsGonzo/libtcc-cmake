@@ -7,7 +7,7 @@ set(__libtcc_compile_definitions INCLUDED)
 
 function(libtcc_compile_definitions FLAG STATUS_MESSAGE)
     if(NOT DEFINED LIBTCC1_NAME)
-        set(LIBTCC1_NAME "libtcc1-${LIBTCC_SUFFIX}.a")
+        set(LIBTCC1_NAME "libtcc1.a")
     endif()
     list(APPEND ${FLAG} TCC_LIBTCC1="${LIBTCC1_NAME}")
     list(APPEND ${FLAG} TCC_TARGET_${LIBTCC_TARGET_ARCHITECTURE})
