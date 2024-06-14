@@ -80,10 +80,19 @@ libtcc_link_libraries(LIBTCC_LINK_LIBRARIES TRUE)
 add_library(${LIBTCC_NAME} ${LIBTCC_BUILD_TYPE} ${LIBTCC_SOURCES})
 set_target_properties(${LIBTCC_NAME} PROPERTIES PREFIX "")
 target_include_directories(${LIBTCC_NAME} PUBLIC ${LIBTCC_PUBLIC_INCLUDE_DIRECTORIES}
-                                          PRIVATE ${LIBTCC_PRIVATE_INCLUDE_DIRECTORIES})
+                                          PRIVATE ${LIBTCC_PRIVATE_INCLUDE_DIRECTORIES}
+										  INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(${LIBTCC_NAME} PUBLIC ${LIBTCC_COMPILE_DEFINITIONS})
 target_link_libraries(${LIBTCC_NAME} ${LIBTCC_LINK_LIBRARIES})
 
 if(LIBTCC_TEST)
     add_subdirectory(tests)
 endif()
+
+add_library(libtcc1 STATIC ${CMAKE_BINARY_DIR}/libtcc/libtcc1_src/libtcc1.c)
+target_compile_definitions(libtcc1 PUBLIC ${LIBTCC_COMPILE_DEFINITIONS})
+
+add_custom_command(TARGET libtcc1 POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:libtcc1> ${CMAKE_BINARY_DIR}/libtcc1.a
+)
+add_dependencies(libtcc libtcc1)
