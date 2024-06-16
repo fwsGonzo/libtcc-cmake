@@ -24,7 +24,7 @@
 
 /* Returns 1 for a code relocation, 0 for a data relocation. For unknown
    relocations, returns -1. */
-int code_reloc (int reloc_type)
+ST_FUNC int code_reloc (int reloc_type)
 {
     switch (reloc_type) {
 
@@ -39,10 +39,13 @@ int code_reloc (int reloc_type)
     case R_RISCV_PCREL_LO12_S:
     case R_RISCV_32_PCREL:
     case R_RISCV_SET6:
+    case R_RISCV_SET8:
+    case R_RISCV_SET16:
     case R_RISCV_SUB6:
     case R_RISCV_ADD16:
     case R_RISCV_ADD32:
     case R_RISCV_ADD64:
+    case R_RISCV_SUB8:
     case R_RISCV_SUB16:
     case R_RISCV_SUB32:
     case R_RISCV_SUB64:
@@ -59,7 +62,7 @@ int code_reloc (int reloc_type)
 /* Returns an enumerator to describe whether and when the relocation needs a
    GOT and/or PLT entry to be created. See tcc.h for a description of the
    different values. */
-int gotplt_entry_type (int reloc_type)
+ST_FUNC int gotplt_entry_type (int reloc_type)
 {
     switch (reloc_type) {
     case R_RISCV_ALIGN:
@@ -68,8 +71,11 @@ int gotplt_entry_type (int reloc_type)
     case R_RISCV_RVC_JUMP:
     case R_RISCV_JUMP_SLOT:
     case R_RISCV_SET6:
+    case R_RISCV_SET8:
+    case R_RISCV_SET16:
     case R_RISCV_SUB6:
     case R_RISCV_ADD16:
+    case R_RISCV_SUB8:
     case R_RISCV_SUB16:
         return NO_GOTPLT_ENTRY;
 
@@ -163,7 +169,7 @@ ST_FUNC void relocate_plt(TCCState *s1)
     }
 }
 
-void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr,
+ST_FUNC void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr,
               addr_t addr, addr_t val)
 {
     uint64_t off64;
@@ -328,11 +334,20 @@ void relocate(TCCState *s1, ElfW_Rel *rel, int type, unsigned char *ptr,
     case R_RISCV_ADD16:
         write16le(ptr, read16le(ptr) + val);
         return;
+    case R_RISCV_SUB8:
+        *ptr -= val;
+        return;
     case R_RISCV_SUB16:
         write16le(ptr, read16le(ptr) - val);
         return;
     case R_RISCV_SET6:
         *ptr = (*ptr & ~0x3f) | (val & 0x3f);
+        return;
+    case R_RISCV_SET8:
+        *ptr = (*ptr & ~0xff) | (val & 0xff);
+        return;
+    case R_RISCV_SET16:
+        *ptr = (*ptr & ~0xffff) | (val & 0xffff);
         return;
     case R_RISCV_SUB6:
         *ptr = (*ptr & ~0x3f) | ((*ptr - val) & 0x3f);

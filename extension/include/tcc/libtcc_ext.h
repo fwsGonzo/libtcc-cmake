@@ -27,7 +27,7 @@ LIBTCCAPI void atcc_set_asset_manager(AAssetManager* manager);
 #endif
 
 /* set error/warning callback for every TCCState that will be configured with atcc_configure */
-LIBTCCAPI void atcc_set_error_func(void* error_opaque, TCCErrorFunc error_func);
+LIBTCCAPI void atcc_set_error_func(void* error_opaque, TCCErrorFunc *error_func);
 /* set include path of every TCCState that will be configured with atcc_configure */
 LIBTCCAPI void atcc_set_include_path(const char* path);
 

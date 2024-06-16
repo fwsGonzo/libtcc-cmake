@@ -65,7 +65,10 @@ endif()
 
 # Generate config.h
 message(STATUS "Libtcc generating tcc config.h in \"${LIBTCC_CONFIG_PATH}\" ...")
-file(WRITE ${LIBTCC_CONFIG_PATH}/config.h "#define TCC_VERSION \"${LIBTCC_VERSION}\"")
+file(WRITE ${LIBTCC_CONFIG_PATH}/config.h
+	"#define TCC_VERSION \"${LIBTCC_VERSION}\""
+	"\n#define CONFIG_TCC_PREDEFS 1"
+	)
 
 if(LIBTCC_ENABLE_EXTENSION)
     include(extension/cmake/setup_extension.cmake)

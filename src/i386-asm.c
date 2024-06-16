@@ -143,10 +143,12 @@ enum {
 # define TREG_XAX   TREG_RAX
 # define TREG_XCX   TREG_RCX
 # define TREG_XDX   TREG_RDX
+# define TOK_ASM_xax TOK_ASM_rax
 #else
 # define TREG_XAX   TREG_EAX
 # define TREG_XCX   TREG_ECX
 # define TREG_XDX   TREG_EDX
+# define TOK_ASM_xax TOK_ASM_eax
 #endif
 
 typedef struct ASMInstr {
@@ -487,7 +489,7 @@ ST_FUNC void gen_expr32(ExprValue *pe)
     if (pe->pcrel)
         /* If PC-relative, always set VT_SYM, even without symbol,
 	   so as to force a relocation to be emitted.  */
-	gen_addrpc32(VT_SYM, pe->sym, pe->v);
+	gen_addrpc32(VT_SYM, pe->sym, pe->v + (ind + 4));
     else
 	gen_addr32(pe->sym ? VT_SYM : 0, pe->sym, pe->v);
 }
@@ -515,7 +517,13 @@ static void gen_disp32(ExprValue *pe)
             sym->type.t = VT_FUNC;
             sym->type.ref = NULL;
         }
+#ifdef TCC_TARGET_X86_64
+        greloca(cur_text_section, sym, ind, R_X86_64_PLT32, pe->v - 4);
+        gen_le32(0);
+#else
         gen_addrpc32(VT_SYM, sym, pe->v);
+#endif
+
     }
 }
 
@@ -1336,7 +1344,6 @@ ST_FUNC void asm_compute_constraints(ASMOperand *operands,
 	    if (is_reg_allocated(op->reg))
 	        tcc_error("asm regvar requests register that's taken already");
 	    reg = op->reg;
-	    goto reg_found;
 	}
     try_next:
         c = *str++;
@@ -1379,12 +1386,17 @@ ST_FUNC void asm_compute_constraints(ASMOperand *operands,
         case 'D':
             reg = 7;
         alloc_reg:
+            if (op->reg >= 0 && reg != op->reg)
+                goto try_next;
             if (is_reg_allocated(reg))
                 goto try_next;
             goto reg_found;
         case 'q':
             /* eax, ebx, ecx or edx */
-            for(reg = 0; reg < 4; reg++) {
+            if (op->reg >= 0) {
+                if ((reg = op->reg) < 4)
+                    goto reg_found;
+            } else for(reg = 0; reg < 4; reg++) {
                 if (!is_reg_allocated(reg))
                     goto reg_found;
             }
@@ -1393,7 +1405,9 @@ ST_FUNC void asm_compute_constraints(ASMOperand *operands,
 	case 'R':
 	case 'p': /* A general address, for x86(64) any register is acceptable*/
             /* any general register */
-            for(reg = 0; reg < 8; reg++) {
+            if ((reg = op->reg) >= 0)
+                goto reg_found;
+            else for(reg = 0; reg < 8; reg++) {
                 if (!is_reg_allocated(reg))
                     goto reg_found;
             }
@@ -1493,7 +1507,6 @@ ST_FUNC void subst_asm_operand(CString *add_str,
                               SValue *sv, int modifier)
 {
     int r, reg, size, val;
-    char buf[64];
 
     r = sv->r;
     if ((r & VT_VALMASK) == VT_CONST) {
@@ -1520,32 +1533,19 @@ ST_FUNC void subst_asm_operand(CString *add_str,
         val = sv->c.i;
         if (modifier == 'n')
             val = -val;
-        snprintf(buf, sizeof(buf), "%d", (int)sv->c.i);
-        cstr_cat(add_str, buf, -1);
+        cstr_printf(add_str, "%d", (int)sv->c.i);
     no_offset:;
 #ifdef TCC_TARGET_X86_64
         if (r & VT_LVAL)
             cstr_cat(add_str, "(%rip)", -1);
 #endif
     } else if ((r & VT_VALMASK) == VT_LOCAL) {
-#ifdef TCC_TARGET_X86_64
-        snprintf(buf, sizeof(buf), "%d(%%rbp)", (int)sv->c.i);
-#else
-        snprintf(buf, sizeof(buf), "%d(%%ebp)", (int)sv->c.i);
-#endif
-        cstr_cat(add_str, buf, -1);
+        cstr_printf(add_str, "%d(%%%s)", (int)sv->c.i, get_tok_str(TOK_ASM_xax + 5, NULL));
     } else if (r & VT_LVAL) {
         reg = r & VT_VALMASK;
         if (reg >= VT_CONST)
             tcc_internal_error("");
-        snprintf(buf, sizeof(buf), "(%%%s)",
-#ifdef TCC_TARGET_X86_64
-                 get_tok_str(TOK_ASM_rax + reg, NULL)
-#else
-                 get_tok_str(TOK_ASM_eax + reg, NULL)
-#endif
-		 );
-        cstr_cat(add_str, buf, -1);
+        cstr_printf(add_str, "(%%%s)", get_tok_str(TOK_ASM_xax + reg, NULL));
     } else {
         /* register case */
         reg = r & VT_VALMASK;
@@ -1605,8 +1605,7 @@ ST_FUNC void subst_asm_operand(CString *add_str,
             break;
 #endif
         }
-        snprintf(buf, sizeof(buf), "%%%s", get_tok_str(reg, NULL));
-        cstr_cat(add_str, buf, -1);
+        cstr_printf(add_str, "%%%s", get_tok_str(reg, NULL));
     }
 }
 

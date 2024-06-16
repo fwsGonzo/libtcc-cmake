@@ -410,7 +410,7 @@ ST_FUNC void gfunc_call(int nb_args)
 {
     int size, align, r, args_size, i, func_call;
     Sym *func_sym;
-    
+
 #ifdef CONFIG_TCC_BCHECK
     if (tcc_state->do_bounds_check)
         gbound_args(nb_args);
@@ -478,12 +478,15 @@ ST_FUNC void gfunc_call(int nb_args)
     func_call = func_sym->f.func_call;
     /* fast call case */
     if ((func_call >= FUNC_FASTCALL1 && func_call <= FUNC_FASTCALL3) ||
-        func_call == FUNC_FASTCALLW) {
+        func_call == FUNC_FASTCALLW || func_call == FUNC_THISCALL) {
         int fastcall_nb_regs;
         const uint8_t *fastcall_regs_ptr;
         if (func_call == FUNC_FASTCALLW) {
             fastcall_regs_ptr = fastcallw_regs;
             fastcall_nb_regs = 2;
+        } else if (func_call == FUNC_THISCALL) {
+            fastcall_regs_ptr = fastcallw_regs;
+            fastcall_nb_regs = 1;
         } else {
             fastcall_regs_ptr = fastcall_regs;
             fastcall_nb_regs = func_call - FUNC_FASTCALL1 + 1;
@@ -503,7 +506,7 @@ ST_FUNC void gfunc_call(int nb_args)
 
     gcall_or_jmp(0);
 
-    if (args_size && func_call != FUNC_STDCALL && func_call != FUNC_FASTCALLW)
+    if (args_size && func_call != FUNC_STDCALL && func_call != FUNC_THISCALL && func_call != FUNC_FASTCALLW)
         gadd_sp(args_size);
     vtop--;
 }
@@ -535,6 +538,9 @@ ST_FUNC void gfunc_prolog(Sym *func_sym)
         fastcall_regs_ptr = fastcall_regs;
     } else if (func_call == FUNC_FASTCALLW) {
         fastcall_nb_regs = 2;
+        fastcall_regs_ptr = fastcallw_regs;
+    } else if (func_call == FUNC_THISCALL) {
+        fastcall_nb_regs = 1;
         fastcall_regs_ptr = fastcallw_regs;
     } else {
         fastcall_nb_regs = 0;
@@ -585,7 +591,7 @@ ST_FUNC void gfunc_prolog(Sym *func_sym)
     }
     func_ret_sub = 0;
     /* pascal type call or fastcall ? */
-    if (func_call == FUNC_STDCALL || func_call == FUNC_FASTCALLW)
+    if (func_call == FUNC_STDCALL || func_call == FUNC_FASTCALLW || func_call == FUNC_THISCALL)
         func_ret_sub = addr - 8;
 #if !defined(TCC_TARGET_PE) && !TARGETOS_FreeBSD || TARGETOS_OpenBSD
     else if (func_vc)

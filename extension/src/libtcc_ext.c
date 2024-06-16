@@ -36,7 +36,7 @@ ST_FUNC int tcc_tool_ar(TCCState *s, int argc, char **argv);
 #endif
 
 typedef struct {
-    TCCErrorFunc error_function;
+    TCCErrorFunc *error_function;
     void* error_opaque;
 
     const char* libtcc1_name;
@@ -207,7 +207,7 @@ LIBTCCAPI void atcc_set_asset_manager(AAssetManager* manager)
 }
 #endif
 
-void atcc_set_error_func(void* error_opaque, TCCErrorFunc error_func)
+void atcc_set_error_func(void* error_opaque, TCCErrorFunc *error_func)
 {
     aTccExtensionVariables.error_function = error_func;
     aTccExtensionVariables.error_opaque = error_opaque;

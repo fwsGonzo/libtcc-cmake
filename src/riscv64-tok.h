@@ -5,8 +5,17 @@
  * The specifications are available under https://riscv.org/technical/specifications/
  */
 
-/* register */
+#define DEF_ASM_WITH_SUFFIX(x, y) \
+  DEF(TOK_ASM_ ## x ## _ ## y, #x "." #y)
 
+#define DEF_ASM_WITH_SUFFIXES(x, y, z) \
+  DEF(TOK_ASM_ ## x ## _ ## y ## _ ## z, #x "." #y "." #z)
+
+#define DEF_ASM_FENCE(x) \
+  DEF(TOK_ASM_ ## x ## _fence, #x)
+
+/* register */
+ /* integer */
  DEF_ASM(x0)
  DEF_ASM(x1)
  DEF_ASM(x2)
@@ -39,9 +48,42 @@
  DEF_ASM(x29)
  DEF_ASM(x30)
  DEF_ASM(x31)
+ /* float */
+ DEF_ASM(f0)
+ DEF_ASM(f1)
+ DEF_ASM(f2)
+ DEF_ASM(f3)
+ DEF_ASM(f4)
+ DEF_ASM(f5)
+ DEF_ASM(f6)
+ DEF_ASM(f7)
+ DEF_ASM(f8)
+ DEF_ASM(f9)
+ DEF_ASM(f10)
+ DEF_ASM(f11)
+ DEF_ASM(f12)
+ DEF_ASM(f13)
+ DEF_ASM(f14)
+ DEF_ASM(f15)
+ DEF_ASM(f16)
+ DEF_ASM(f17)
+ DEF_ASM(f18)
+ DEF_ASM(f19)
+ DEF_ASM(f20)
+ DEF_ASM(f21)
+ DEF_ASM(f22)
+ DEF_ASM(f23)
+ DEF_ASM(f24)
+ DEF_ASM(f25)
+ DEF_ASM(f26)
+ DEF_ASM(f27)
+ DEF_ASM(f28)
+ DEF_ASM(f29)
+ DEF_ASM(f30)
+ DEF_ASM(f31)
 
-/* register macros */
-
+/* register ABI mnemonics, refer to RISC-V ABI 1.0 */
+ /* integer */
  DEF_ASM(zero)
  DEF_ASM(ra)
  DEF_ASM(sp)
@@ -50,7 +92,7 @@
  DEF_ASM(t0)
  DEF_ASM(t1)
  DEF_ASM(t2)
- DEF_ASM(fp)
+ DEF_ASM(s0)
  DEF_ASM(s1)
  DEF_ASM(a0)
  DEF_ASM(a1)
@@ -74,13 +116,41 @@
  DEF_ASM(t4)
  DEF_ASM(t5)
  DEF_ASM(t6)
-
- DEF_ASM(s0) // = x8
-
+ /* float */
+ DEF_ASM(ft0)
+ DEF_ASM(ft1)
+ DEF_ASM(ft2)
+ DEF_ASM(ft3)
+ DEF_ASM(ft4)
+ DEF_ASM(ft5)
+ DEF_ASM(ft6)
+ DEF_ASM(ft7)
+ DEF_ASM(fs0)
+ DEF_ASM(fs1)
+ DEF_ASM(fa0)
+ DEF_ASM(fa1)
+ DEF_ASM(fa2)
+ DEF_ASM(fa3)
+ DEF_ASM(fa4)
+ DEF_ASM(fa5)
+ DEF_ASM(fa6)
+ DEF_ASM(fa7)
+ DEF_ASM(fs2)
+ DEF_ASM(fs3)
+ DEF_ASM(fs4)
+ DEF_ASM(fs5)
+ DEF_ASM(fs6)
+ DEF_ASM(fs7)
+ DEF_ASM(fs8)
+ DEF_ASM(fs9)
+ DEF_ASM(fs10)
+ DEF_ASM(fs11)
+ DEF_ASM(ft8)
+ DEF_ASM(ft9)
+ DEF_ASM(ft10)
+ DEF_ASM(ft11)
+ /* not in the ABI */
  DEF_ASM(pc)
-
-#define DEF_ASM_WITH_SUFFIX(x, y) \
-  DEF(TOK_ASM_ ## x ## _ ## y, #x #y)
 
 /*   Loads */
 
@@ -110,18 +180,12 @@
  DEF_ASM(slli)
  DEF_ASM(srli)
  DEF_ASM(sllw)
- DEF_ASM(slld)
  DEF_ASM(slliw)
- DEF_ASM(sllid)
  DEF_ASM(srlw)
- DEF_ASM(srld)
  DEF_ASM(srliw)
- DEF_ASM(srlid)
  DEF_ASM(srai)
  DEF_ASM(sraw)
- DEF_ASM(srad)
  DEF_ASM(sraiw)
- DEF_ASM(sraid)
 
 /* Arithmetic */
 
@@ -186,10 +250,6 @@
  DEF_ASM(rdinstret)
  DEF_ASM(rdinstreth)
 
-/* no operation */
- DEF_ASM(nop)
- DEF_ASM_WITH_SUFFIX(c, nop)
-
 /* “M” Standard Extension for Integer Multiplication and Division, V2.0 */
  DEF_ASM(mul)
  DEF_ASM(mulh)
@@ -207,6 +267,7 @@
  DEF_ASM(remuw)
 
 /* "C" Extension for Compressed Instructions, V2.0 */
+ DEF_ASM_WITH_SUFFIX(c, nop)
 /* Loads */
  DEF_ASM_WITH_SUFFIX(c, li)
  DEF_ASM_WITH_SUFFIX(c, lw)
@@ -236,11 +297,8 @@
 
 /* Shifts */
  DEF_ASM_WITH_SUFFIX(c, slli)
- DEF_ASM_WITH_SUFFIX(c, slli64)
  DEF_ASM_WITH_SUFFIX(c, srli)
- DEF_ASM_WITH_SUFFIX(c, srli64)
  DEF_ASM_WITH_SUFFIX(c, srai)
- DEF_ASM_WITH_SUFFIX(c, srai64)
 
 /* Arithmetic */
  DEF_ASM_WITH_SUFFIX(c, add)
@@ -285,6 +343,31 @@
  DEF_ASM(csrrwi)
  DEF_ASM(csrrsi)
  DEF_ASM(csrrci)
+ /* registers */
+ DEF_ASM(cycle)
+ DEF_ASM(fcsr)
+ DEF_ASM(fflags)
+ DEF_ASM(frm)
+ DEF_ASM(instret)
+ DEF_ASM(time)
+ /* RV32I-only */
+ DEF_ASM(cycleh)
+ DEF_ASM(instreth)
+ DEF_ASM(timeh)
+ /* pseudo */
+ DEF_ASM(csrc)
+ DEF_ASM(csrci)
+ DEF_ASM(csrr)
+ DEF_ASM(csrs)
+ DEF_ASM(csrsi)
+ DEF_ASM(csrw)
+ DEF_ASM(csrwi)
+ DEF_ASM(frcsr)
+ DEF_ASM(frflags)
+ DEF_ASM(frrm)
+ DEF_ASM(fscsr)
+ DEF_ASM(fsflags)
+ DEF_ASM(fsrm)
 
 /* Privileged Instructions */
 
@@ -293,3 +376,100 @@
  DEF_ASM(hrts)
  DEF_ASM(wfi)
 
+/* pseudoinstructions */
+ DEF_ASM(beqz)
+ DEF_ASM(bgez)
+ DEF_ASM(bgt)
+ DEF_ASM(bgtu)
+ DEF_ASM(bgtz)
+ DEF_ASM(ble)
+ DEF_ASM(bleu)
+ DEF_ASM(blez)
+ DEF_ASM(bltz)
+ DEF_ASM(bnez)
+ DEF_ASM(call)
+ DEF_ASM_WITH_SUFFIX(fabs, d)
+ DEF_ASM_WITH_SUFFIX(fabs, s)
+ DEF_ASM(fld)
+ DEF_ASM(flw)
+ DEF_ASM_WITH_SUFFIX(fmv, d)
+ DEF_ASM_WITH_SUFFIX(fmv, s)
+ DEF_ASM_WITH_SUFFIX(fneg, d)
+ DEF_ASM_WITH_SUFFIX(fneg, s)
+ DEF_ASM(fsd)
+ DEF_ASM(fsw)
+ DEF_ASM(j)
+ DEF_ASM(jump)
+ DEF_ASM(jr)
+ DEF_ASM(la)
+ DEF_ASM(li)
+ DEF_ASM(lla)
+ DEF_ASM(mv)
+ DEF_ASM(neg)
+ DEF_ASM(negw)
+ DEF_ASM(nop)
+ DEF_ASM(not)
+ DEF_ASM(ret)
+ DEF_ASM(seqz)
+ DEF_ASM_WITH_SUFFIX(sext, w)
+ DEF_ASM(sgtz)
+ DEF_ASM(sltz)
+ DEF_ASM(snez)
+ DEF_ASM(tail)
+
+/* Possible values for .option directive */
+ DEF_ASM(arch)
+ DEF_ASM(rvc)
+ DEF_ASM(norvc)
+ DEF_ASM(pic)
+ DEF_ASM(nopic)
+ DEF_ASM(relax)
+ DEF_ASM(norelax)
+ DEF_ASM(push)
+ DEF_ASM(pop)
+
+/* “A” Standard Extension for Atomic Instructions, Version 2.1 */
+ /* XXX: Atomic memory operations */
+ DEF_ASM_WITH_SUFFIX(lr, w)
+ DEF_ASM_WITH_SUFFIXES(lr, w, aq)
+ DEF_ASM_WITH_SUFFIXES(lr, w, rl)
+ DEF_ASM_WITH_SUFFIXES(lr, w, aqrl)
+
+ DEF_ASM_WITH_SUFFIX(lr, d)
+ DEF_ASM_WITH_SUFFIXES(lr, d, aq)
+ DEF_ASM_WITH_SUFFIXES(lr, d, rl)
+ DEF_ASM_WITH_SUFFIXES(lr, d, aqrl)
+
+
+ DEF_ASM_WITH_SUFFIX(sc, w)
+ DEF_ASM_WITH_SUFFIXES(sc, w, aq)
+ DEF_ASM_WITH_SUFFIXES(sc, w, rl)
+ DEF_ASM_WITH_SUFFIXES(sc, w, aqrl)
+
+ DEF_ASM_WITH_SUFFIX(sc, d)
+ DEF_ASM_WITH_SUFFIXES(sc, d, aq)
+ DEF_ASM_WITH_SUFFIXES(sc, d, rl)
+ DEF_ASM_WITH_SUFFIXES(sc, d, aqrl)
+
+/* `fence` arguments */
+/* NOTE: Order is important */
+ DEF_ASM_FENCE(w)
+ DEF_ASM_FENCE(r)
+ DEF_ASM_FENCE(rw)
+
+ DEF_ASM_FENCE(o)
+ DEF_ASM_FENCE(ow)
+ DEF_ASM_FENCE(or)
+ DEF_ASM_FENCE(orw)
+
+ DEF_ASM_FENCE(i)
+ DEF_ASM_FENCE(iw)
+ DEF_ASM_FENCE(ir)
+ DEF_ASM_FENCE(irw)
+
+ DEF_ASM_FENCE(io)
+ DEF_ASM_FENCE(iow)
+ DEF_ASM_FENCE(ior)
+ DEF_ASM_FENCE(iorw)
+
+#undef DEF_ASM_WITH_SUFFIX
